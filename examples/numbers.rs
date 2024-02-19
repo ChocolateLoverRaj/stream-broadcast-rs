@@ -6,7 +6,7 @@ use tokio::join;
 
 #[tokio::main]
 async fn main() {
-    let broadcast = futures::stream::iter(1..=20).fuse().broadcast(100);
+    let broadcast = futures::stream::iter(1..=50).fuse().broadcast_unlimited();
 
     let odd_stream = broadcast.clone().map(|(_index, value)| value).filter(|v| {
         let is_odd = v.is_odd();

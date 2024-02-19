@@ -16,6 +16,7 @@ pub use weak::*;
 
 pub trait StreamBroadcastExt: FusedStream + Sized {
     fn broadcast(self, size: usize) -> StreamBroadcast<Self>;
+    fn broadcast_unlimited(self) -> StreamBroadcastUnlimited<Self>;
 }
 
 impl<T: FusedStream + Sized> StreamBroadcastExt for T
@@ -24,6 +25,10 @@ where
 {
     fn broadcast(self, size: usize) -> StreamBroadcast<Self> {
         StreamBroadcast::new(self, size)
+    }
+
+    fn broadcast_unlimited(self) -> StreamBroadcastUnlimited<Self> {
+        StreamBroadcastUnlimited::new(self)
     }
 }
 
@@ -134,6 +139,87 @@ where
 }
 
 #[pin_project]
+pub struct StreamBroadcastUnlimited<T: FusedStream> {
+    pos: u64,
+    id: u64,
+    state: Arc<Mutex<Pin<Box<StreamBroadcastUnlimitedState<T>>>>>,
+}
+
+impl<T: FusedStream> Clone for StreamBroadcastUnlimited<T> {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            id: create_id(),
+            pos: self.state.lock().unwrap().global_pos,
+        }
+    }
+}
+
+impl<T: FusedStream> StreamBroadcastUnlimited<T>
+where
+    T::Item: Clone,
+{
+    pub fn new(outer: T) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(Box::pin(StreamBroadcastUnlimitedState::new(
+                outer,
+            )))),
+            id: create_id(),
+            pos: 0,
+        }
+    }
+}
+
+impl<T: FusedStream> Stream for StreamBroadcastUnlimited<T>
+where
+    T::Item: Clone,
+{
+    type Item = (u64, T::Item);
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let this = self.project();
+        let mut lock = this.state.lock().unwrap();
+        broadast_next_unlimited(lock.deref_mut().as_mut(), cx, this.pos, *this.id)
+    }
+}
+
+fn broadast_next_unlimited<T: FusedStream>(
+    pinned: Pin<&mut StreamBroadcastUnlimitedState<T>>,
+    cx: &mut std::task::Context<'_>,
+    pos: &mut u64,
+    id: u64,
+) -> Poll<Option<(u64, T::Item)>>
+where
+    T::Item: Clone,
+{
+    match pinned.poll(cx, *pos, id) {
+        Poll::Ready(Some((new_pos, x))) => {
+            debug_assert!(new_pos > *pos, "Must always grow {} > {}", new_pos, *pos);
+            let offset = new_pos - *pos - 1;
+            *pos = new_pos;
+            Poll::Ready(Some((offset, x)))
+        }
+        Poll::Ready(None) => {
+            *pos += 1;
+            Poll::Ready(None)
+        }
+        Poll::Pending => Poll::Pending,
+    }
+}
+
+impl<T: FusedStream> FusedStream for StreamBroadcastUnlimited<T>
+where
+    T::Item: Clone,
+{
+    fn is_terminated(&self) -> bool {
+        self.state.lock().unwrap().stream.is_terminated()
+    }
+}
+
+#[pin_project]
 struct StreamBroadcastState<T: FusedStream> {
     #[pin]
     stream: T,
@@ -187,6 +273,63 @@ where
                 } else {
                     this.cache[(*this.global_pos % cap as u64) as usize] = x.clone();
                 }
+                *this.global_pos += 1;
+                let result = (*this.global_pos, x);
+                Poll::Ready(Some(result))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => {
+                this.wakable.push((id, cx.waker().clone()));
+                Poll::Pending
+            }
+        }
+    }
+}
+
+#[pin_project]
+struct StreamBroadcastUnlimitedState<T: FusedStream> {
+    #[pin]
+    stream: T,
+    global_pos: u64,
+    cache: Vec<T::Item>,
+    wakable: Vec<(u64, std::task::Waker)>,
+}
+
+impl<T: FusedStream> StreamBroadcastUnlimitedState<T>
+where
+    T::Item: Clone,
+{
+    fn new(outer: T) -> Self {
+        Self {
+            stream: outer,
+            cache: Vec::new(), // Could be improved with  Box<[MaybeUninit<T::Item>]>
+            global_pos: Default::default(),
+            wakable: Default::default(),
+        }
+    }
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        request_pos: u64,
+        id: u64,
+    ) -> Poll<Option<(u64, T::Item)>> {
+        let this = self.project();
+        if *this.global_pos > request_pos {
+            let return_pos = request_pos;
+
+            let result = this.cache[(return_pos as u64) as usize].clone();
+            return Poll::Ready(Some((return_pos + 1, result)));
+        }
+
+        match this.stream.poll_next(cx) {
+            Poll::Ready(Some(x)) => {
+                this.wakable.drain(..).for_each(|(k, w)| {
+                    if k != id {
+                        w.wake();
+                    }
+                });
+
+                this.cache.push(x.clone());
                 *this.global_pos += 1;
                 let result = (*this.global_pos, x);
                 Poll::Ready(Some(result))
