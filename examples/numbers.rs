@@ -1,7 +1,7 @@
 use futures::StreamExt;
 use is_odd::IsOdd;
 use prime_checker::is_prime;
-use stream_broadcast::StreamBroadcastExt;
+use stream_broadcast::StreamBroadcastUnlimitedExt;
 use tokio::join;
 
 #[tokio::main]
