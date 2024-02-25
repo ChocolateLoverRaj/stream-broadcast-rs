@@ -9,6 +9,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc, Mutex},
     task::Poll,
 };
+use std::fmt::{Debug, Formatter};
 
 mod weak;
 
@@ -143,6 +144,12 @@ pub struct StreamBroadcastUnlimited<T: FusedStream> {
     pos: u64,
     id: u64,
     state: Arc<Mutex<Pin<Box<StreamBroadcastUnlimitedState<T>>>>>,
+}
+
+impl<T: FusedStream> Debug for StreamBroadcastUnlimited<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StreamBroadcastUnlimited")
+    }
 }
 
 impl<T: FusedStream> Clone for StreamBroadcastUnlimited<T> {
