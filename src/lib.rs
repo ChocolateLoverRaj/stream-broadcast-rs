@@ -9,33 +9,25 @@ use std::{
     sync::{atomic::AtomicU64, Arc, Mutex},
     task::Poll,
 };
-use std::fmt::Debug;
 
 mod weak;
 
 pub use weak::*;
 
-pub trait StreamBroadcastExt: FusedStream + Sized  {
+pub trait StreamBroadcastExt: FusedStream + Sized {
     fn broadcast(self, size: usize) -> StreamBroadcast<Self>;
-}
-
-pub trait StreamBroadcastUnlimitedExt: FusedStream + Sized + Debug where Self::Item: Debug, {
     fn broadcast_unlimited(self) -> StreamBroadcastUnlimited<Self>;
 }
 
 impl<T: FusedStream + Sized> StreamBroadcastExt for T
-    where
-        T::Item: Clone,
+where
+    T::Item: Clone,
 {
     fn broadcast(self, size: usize) -> StreamBroadcast<Self> {
         StreamBroadcast::new(self, size)
     }
 
-
-}
-
-impl<T: FusedStream + Sized + Debug> StreamBroadcastUnlimitedExt for T where T::Item: Clone + Debug, {
-    fn broadcast_unlimited(self) -> StreamBroadcastUnlimited<Self> where T::Item: Debug, {
+    fn broadcast_unlimited(self) -> StreamBroadcastUnlimited<Self> {
         StreamBroadcastUnlimited::new(self)
     }
 }
@@ -58,8 +50,8 @@ impl<T: FusedStream> Clone for StreamBroadcast<T> {
 }
 
 impl<T: FusedStream> StreamBroadcast<T>
-    where
-        T::Item: Clone,
+where
+    T::Item: Clone,
 {
     pub fn new(outer: T, size: usize) -> Self {
         Self {
@@ -95,8 +87,8 @@ impl<T: FusedStream> StreamBroadcast<T>
 }
 
 impl<T: FusedStream> Stream for StreamBroadcast<T>
-    where
-        T::Item: Clone,
+where
+    T::Item: Clone,
 {
     type Item = (u64, T::Item);
 
@@ -109,20 +101,18 @@ impl<T: FusedStream> Stream for StreamBroadcast<T>
         broadast_next(lock.deref_mut().as_mut(), cx, this.pos, *this.id)
     }
 }
-
 fn create_id() -> u64 {
     static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
     ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
 }
-
 fn broadast_next<T: FusedStream>(
     pinned: Pin<&mut StreamBroadcastState<T>>,
     cx: &mut std::task::Context<'_>,
     pos: &mut u64,
     id: u64,
 ) -> Poll<Option<(u64, T::Item)>>
-    where
-        T::Item: Clone,
+where
+    T::Item: Clone,
 {
     match pinned.poll(cx, *pos, id) {
         Poll::Ready(Some((new_pos, x))) => {
@@ -140,8 +130,8 @@ fn broadast_next<T: FusedStream>(
 }
 
 impl<T: FusedStream> FusedStream for StreamBroadcast<T>
-    where
-        T::Item: Clone,
+where
+    T::Item: Clone,
 {
     fn is_terminated(&self) -> bool {
         self.state.lock().unwrap().stream.is_terminated()
@@ -149,14 +139,13 @@ impl<T: FusedStream> FusedStream for StreamBroadcast<T>
 }
 
 #[pin_project]
-#[derive(Debug)]
-pub struct StreamBroadcastUnlimited<T: FusedStream + Debug> where T::Item: Debug, {
+pub struct StreamBroadcastUnlimited<T: FusedStream> {
     pos: u64,
     id: u64,
     state: Arc<Mutex<Pin<Box<StreamBroadcastUnlimitedState<T>>>>>,
 }
 
-impl<T: FusedStream + Debug> Clone for StreamBroadcastUnlimited<T> where T::Item: Debug, {
+impl<T: FusedStream> Clone for StreamBroadcastUnlimited<T> {
     fn clone(&self) -> Self {
         Self {
             state: self.state.clone(),
@@ -166,9 +155,9 @@ impl<T: FusedStream + Debug> Clone for StreamBroadcastUnlimited<T> where T::Item
     }
 }
 
-impl<T: FusedStream + Debug> StreamBroadcastUnlimited<T>
-    where
-        T::Item: Clone + Debug,
+impl<T: FusedStream> StreamBroadcastUnlimited<T>
+where
+    T::Item: Clone,
 {
     pub fn new(outer: T) -> Self {
         Self {
@@ -181,9 +170,9 @@ impl<T: FusedStream + Debug> StreamBroadcastUnlimited<T>
     }
 }
 
-impl<T: FusedStream + Debug> Stream for StreamBroadcastUnlimited<T>
-    where
-        T::Item: Clone + Debug,
+impl<T: FusedStream> Stream for StreamBroadcastUnlimited<T>
+where
+    T::Item: Clone,
 {
     type Item = (u64, T::Item);
 
@@ -197,14 +186,14 @@ impl<T: FusedStream + Debug> Stream for StreamBroadcastUnlimited<T>
     }
 }
 
-fn broadast_next_unlimited<T: FusedStream + Debug>(
+fn broadast_next_unlimited<T: FusedStream>(
     pinned: Pin<&mut StreamBroadcastUnlimitedState<T>>,
     cx: &mut std::task::Context<'_>,
     pos: &mut u64,
     id: u64,
 ) -> Poll<Option<(u64, T::Item)>>
-    where
-        T::Item: Clone,
+where
+    T::Item: Clone,
 {
     match pinned.poll(cx, *pos, id) {
         Poll::Ready(Some((new_pos, x))) => {
@@ -221,9 +210,9 @@ fn broadast_next_unlimited<T: FusedStream + Debug>(
     }
 }
 
-impl<T: FusedStream + Debug> FusedStream for StreamBroadcastUnlimited<T>
-    where
-        T::Item: Clone + Debug,
+impl<T: FusedStream> FusedStream for StreamBroadcastUnlimited<T>
+where
+    T::Item: Clone,
 {
     fn is_terminated(&self) -> bool {
         self.state.lock().unwrap().stream.is_terminated()
@@ -240,8 +229,8 @@ struct StreamBroadcastState<T: FusedStream> {
 }
 
 impl<T: FusedStream> StreamBroadcastState<T>
-    where
-        T::Item: Clone,
+where
+    T::Item: Clone,
 {
     fn new(outer: T, size: usize) -> Self {
         Self {
@@ -298,8 +287,7 @@ impl<T: FusedStream> StreamBroadcastState<T>
 }
 
 #[pin_project]
-#[derive(Debug)]
-struct StreamBroadcastUnlimitedState<T: FusedStream + Debug> {
+struct StreamBroadcastUnlimitedState<T: FusedStream> {
     #[pin]
     stream: T,
     global_pos: u64,
@@ -307,9 +295,9 @@ struct StreamBroadcastUnlimitedState<T: FusedStream + Debug> {
     wakable: Vec<(u64, std::task::Waker)>,
 }
 
-impl<T: FusedStream + Debug> StreamBroadcastUnlimitedState<T>
-    where
-        T::Item: Clone,
+impl<T: FusedStream> StreamBroadcastUnlimitedState<T>
+where
+    T::Item: Clone,
 {
     fn new(outer: T) -> Self {
         Self {
